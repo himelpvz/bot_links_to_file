@@ -4,39 +4,36 @@ on:
   workflow_dispatch:
     inputs:
       pixeldrain_link:
-        description: 'Pixeldrain file or folder link (optional). If empty, workflow uses repository secret PIXEL_LINK'
+        description: 'Pixeldrain link (optional, fallback to secret PIXEL_LINK)'
         required: false
       chat_id:
-        description: '(Optional) Telegram chat id. If omitted, uses secret TELEGRAM_CHAT_ID'
+        description: 'Telegram chat id (optional, fallback to secret TELEGRAM_CHAT_ID)'
         required: false
       max_upload_gb:
-        description: '(Optional) Max upload size in GB (defaults to 1.9)'
+        description: 'Max upload size (GB). Example: 2'
         required: false
 
 jobs:
   upload:
     runs-on: ubuntu-latest
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node 18+
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: "18"
 
-      - name: Install system tools
+      - name: Install tools
         run: sudo apt-get update && sudo apt-get install -y zip wget curl
 
-      - name: Run download & upload script
-        # we pass env so script can read PIXEL_LINK from input OR from secret fallback
+      - name: Run script
         env:
-          # If the user provided pixeldrain_link when running the workflow, use it;
-          # otherwise use the repository secret PIXEL_LINK (you must add this secret in Settings → Secrets → Actions).
           PIXEL_LINK: ${{ github.event.inputs.pixeldrain_link != '' && github.event.inputs.pixeldrain_link || secrets.PIXEL_LINK }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ github.event.inputs.chat_id != '' && github.event.inputs.chat_id || secrets.TELEGRAM_CHAT_ID }}
-          MAX_UPLOAD_BYTES: ${{ github.event.inputs.max_upload_gb != '' && format('%.0f', (fromJson('["' + github.event.inputs.max_upload_gb + '"]')[0] * 1000000000)) || '' }}
+          MAX_UPLOAD_GB: ${{ github.event.inputs.max_upload_gb }}
         run: |
-          # If MAX_UPLOAD_BYTES is empty, the script will use its default (~1.9 GB).
           node ./send_and_upload.js
