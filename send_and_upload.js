@@ -1,10 +1,10 @@
-// send_and_upload.js
-// Node 18+ required (uses global fetch, child_process)
+// send_and_upload.js (CommonJS version — Node 18+)
+// Replaces ES module imports with require so Node runs it as CommonJS.
 
-import { spawnSync } from 'child_process';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+const { spawnSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 const PIXEL_FILE_RE = /https?:\/\/(?:www\.)?pixeldrain\.com\/u\/([A-Za-z0-9_-]+)/i;
 const PIXEL_FOLDER_RE = /https?:\/\/(?:www\.)?pixeldrain\.com\/l\/([A-Za-z0-9_-]+)/i;
@@ -50,13 +50,11 @@ async function headUrl(url) {
 }
 
 async function downloadWithWget(url, outPath) {
-  // Use wget with --content-disposition disabled for stable name; we set outPath
-  // using -O is safer (no guesswork).
+  // Use wget with -O to write to exact path
   runCmd('wget', ['-c', '-O', outPath, url]);
 }
 
 async function uploadDocumentCurl(token, chat_id, filePath, caption='') {
-  // Use curl to POST multipart/form-data to Telegram sendDocument
   const url = tgApiUrl(token, 'sendDocument');
   const args = [
     '--silent',
@@ -72,7 +70,6 @@ async function uploadDocumentCurl(token, chat_id, filePath, caption='') {
     console.error('curl upload error stdout/stderr:', res.stdout, res.stderr);
     throw new Error(`curl exited with ${res.status}`);
   }
-  // Try parse response
   try { return JSON.parse(res.stdout || '{}'); } catch { return null; }
 }
 
@@ -111,7 +108,6 @@ async function handleFile(token, chat_id, fileId, maxBytes) {
     await uploadDocumentCurl(token, chat_id, outPath, `Uploaded from Pixeldrain: ${filename}`);
     await sendTelegramMessage(token, chat_id, `✅ Uploaded *${escapeMarkdownV2(filename)}* successfully.`);
   } finally {
-    // cleanup
     try { fs.unlinkSync(outPath); } catch {}
     try { fs.rmdirSync(tmpDir, { recursive: true }); } catch {}
   }
@@ -132,11 +128,9 @@ async function handleFolder(token, chat_id, folderId, maxBytes) {
 
   const totalBytes = json.files.reduce((s,f)=>s + (f.size || 0), 0);
   if (totalBytes > maxBytes) {
-    // too big to zip + upload
     const lines = json.files.map(f => `- ${escapeMarkdownV2(f.name)} (${f.size || 'unknown'} bytes)\n\`\`${escapeMarkdownV2(fileApiUrl(f.id))}\`\``);
     const preview = lines.slice(0, 20).join('\n\n');
     await sendTelegramMessage(token, chat_id, `❗ Folder contains ${json.files.length} files, total size ${totalBytes} bytes which is larger than allowed upload limit. Sending direct links instead:\n\n${preview}\n\n(Only first 20 shown)`);
-    // send them in chunks
     let chunk = [];
     let curLen = 0;
     for (const line of lines) {
@@ -149,24 +143,20 @@ async function handleFolder(token, chat_id, folderId, maxBytes) {
     return;
   }
 
-  // Download all files and zip
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pixeldrain-'));
   try {
     await sendTelegramMessage(token, chat_id, `⬇️ Downloading ${json.files.length} file(s) and preparing zip...`);
     for (const f of json.files) {
       const durl = fileApiUrl(f.id);
-      // safe name
       const safeName = f.name.replace(/[\/\\]/g, '_');
       const outPath = path.join(tmpDir, safeName);
       await downloadWithWget(durl, outPath);
     }
-    // zip
     const zipPath = path.join(os.tmpdir(), `pixeldrain-folder-${folderId}.zip`);
     runCmd('zip', ['-r', zipPath, '.'], { cwd: tmpDir });
     const stats = fs.statSync(zipPath);
     if (stats.size > maxBytes) {
       await sendTelegramMessage(token, chat_id, `❗ Zip archive size ${stats.size} bytes exceeds the allowed upload size. Sending direct links instead.`);
-      // fallback to sending links
       for (const f of json.files) {
         await sendTelegramMessage(token, chat_id, `${escapeMarkdownV2(f.name)} — \`\`${escapeMarkdownV2(fileApiUrl(f.id))}\`\``);
       }
@@ -176,10 +166,8 @@ async function handleFolder(token, chat_id, folderId, maxBytes) {
     await sendTelegramMessage(token, chat_id, `⬆️ Uploading zip (${stats.size} bytes) to Telegram...`);
     await uploadDocumentCurl(token, chat_id, zipPath, `Pixeldrain folder ${folderId}`);
     await sendTelegramMessage(token, chat_id, `✅ Folder uploaded as zip.`);
-    // cleanup zip
     try { fs.unlinkSync(zipPath); } catch {}
   } finally {
-    // cleanup tmpDir
     try { fs.rmdirSync(tmpDir, { recursive: true }); } catch {}
   }
 }
@@ -189,7 +177,10 @@ async function handleFolder(token, chat_id, folderId, maxBytes) {
     const link = process.env.PIXEL_LINK;
     const token = process.env.TELEGRAM_BOT_TOKEN;
     const chat_id = process.env.TELEGRAM_CHAT_ID;
-    const maxBytes = process.env.MAX_UPLOAD_BYTES ? Number(process.env.MAX_UPLOAD_BYTES) : DEFAULT_MAX_BYTES;
+
+    // MAX_UPLOAD_GB is provided as string (e.g. "1.5"); convert to bytes.
+    const maxUploadGb = process.env.MAX_UPLOAD_GB ? Number(process.env.MAX_UPLOAD_GB) : null;
+    const maxBytes = (maxUploadGb && !isNaN(maxUploadGb)) ? Math.floor(maxUploadGb * 1_000_000_000) : DEFAULT_MAX_BYTES;
 
     if (!link) throw new Error('PIXEL_LINK environment variable missing');
     if (!token) throw new Error('TELEGRAM_BOT_TOKEN environment variable missing');
